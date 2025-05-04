@@ -22,15 +22,27 @@ class Repository:
 
     def create_transactions(self, transactions:list[any]):
         with Session(self.engine) as session:  
-            try:   
-                for transaction in transactions:
-                    stmt = create(Transaction).values(
-                        amount=transaction.amount,
-                        currency=transaction.currency,
-                        user_id=transaction.user_id,
-                        date=transaction.date            
-                    )
-                    session.exec(stmt)
+            try:      
+                currencies = {tx.currency for tx in transactions}
+                stmt = select(Currency).where(Currency.currency.in_(currencies))
+                valid_currencies = {c.currency for c in session.exec(stmt)}
+                invalid_currencies = currencies - valid_currencies
+                
+                if invalid_currencies:
+                    return {
+                        "status": Status.FAILURE,
+                        "message": f"transaction failed because there are/is invalid currencies {invalid_currencies}."
+                    }
+                    
+                session.add_all([
+                    Transaction(
+                        id=tx.id,
+                        amount=tx.amount,
+                        currency=tx.currency,
+                        user_id=tx.user_id,
+                        date=tx.date
+                    ) for tx in transactions
+                ]) 
                 session.commit()    
 
                 return {
