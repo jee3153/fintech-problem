@@ -94,6 +94,6 @@ async def read_report(from_date: str|None, to_date: str|None, group_by: str):
     response = repository.get_report(from_date, to_date, groups)
     if response["status"] == Status.FAILURE:
         raise HTTPException(status_code=400, detail=response["message"])
-    return {f"amount_by_{group_by}": response["results"]}
+    return  response["results"]
     
 

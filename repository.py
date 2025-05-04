@@ -1,9 +1,7 @@
 from db_config import start_db_engine
-from sqlmodel import SQLModel, Session, select, func, update, insert as create
+from sqlmodel import Session, select, func, update, insert as create
 from Transaction import Transaction
 from enum import Enum
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from datetime import date
 from uuid import UUID
 from currency_config import Currency
@@ -129,46 +127,66 @@ class Repository:
             except Exception as e:
                 return {"status": Status.FAILURE, "message": f"Failed to delete transaction {transaction_id}."}
             
-    def get_report(self, from_date, to_date, groups: str):
+    def get_report(self, from_date, to_date, groups: list[str]):
+        print(groups)
+        group_by_map = {
+            GroupBy.CURRENCY: Transaction.currency, 
+            GroupBy.DAY: func.date(Transaction.date).label("date"), 
+            GroupBy.USER: Transaction.user_id
+        }
+        groups = [GroupBy[group_by] for group_by in groups ]
+
         with Session(self.engine) as session:
             try:
-                select_columns = [func.sum(Transaction.amount).label("total_amount")]
+                select_column = [func.sum(Transaction.amount).label("total_amount")]
+                group_by_column = []
+                for group in groups:
+                    select_column.append(group_by_map[group])
+                    group_by_column.append(group_by_map[group])
 
-                if GroupBy.CURRENCY.name in groups:
-                    select_columns.append(Transaction.currency)
-                if GroupBy.DAY.name in groups:
-                    select_columns.append(func.date(Transaction.date).label("day"))
-                if GroupBy.USER.name in groups:
-                    select_columns.append(Transaction.user_id)
-
-                stmt = select(*select_columns).where(Transaction.deleted == False)
+                stmt = select(*select_column).where(Transaction.deleted == False)
 
                 if from_date and to_date:
                     start = date.fromisoformat(from_date)
                     end = date.fromisoformat(to_date)
                     stmt = stmt\
                             .where(func.date(Transaction.date) >= start)\
-                            .where(func.date(Transaction.date) <= end)
-                    
-                group_by_columns = []    
-                if GroupBy.CURRENCY.name in groups:
-                    group_by_columns.append(Transaction.currency)
-                if GroupBy.DAY.name in groups:
-                    group_by_columns.append(func.date(Transaction.date))
-                if GroupBy.USER.name in groups:
-                    group_by_columns.append(Transaction.user_id)
+                            .where(func.date(Transaction.date) <= end)               
 
-                stmt = stmt.group_by(*group_by_columns)
+                stmt = stmt.group_by(*group_by_column)
+
                 results = session.exec(stmt).all()
                 formatted_results = []
+
                 for result in results:
-                    formatted_results.append({
-                        **(({"user_id": result.user_id} if GroupBy.USER.name in groups else {})),
-                        "totaml_amount": float(result.total_amount or 0),
-                        **(({"currency": result.currency} if GroupBy.CURRENCY.name in groups else {})),
-                        **(({"day": str(result.day)} if GroupBy.DAY in groups else {}))
-                    })    
-                
-                return {"status": Status.SUCCESS, "results": formatted_results}
+                    result_dict = {"total_amount": float(result.total_amount or 0)}
+
+                    if GroupBy.USER in groups:
+                        result_dict["user_id"] = result.user_id if result.user_id else ""
+                    if GroupBy.CURRENCY in groups:
+                        result_dict["currency"] = result.currency if result.currency else ""
+                    if GroupBy.DAY in groups:
+                        result_dict["date"] = str(result.date) if result.date else ""     
+                   
+                    formatted_results.append(result_dict)
+
+                final_result = {}
+                for r in formatted_results:
+                    current_level = final_result
+
+                    for i, group in enumerate(groups):
+                        if GroupBy.USER ==  group:
+                            current_key = r["user_id"]
+                        elif GroupBy.CURRENCY == group:
+                            current_key = r["currency"]
+                        elif GroupBy.DAY == group:
+                            current_key = r["date"]  
+                        else: continue    
+
+                        if i == len(groups)-1:
+                            current_level[current_key] = r["total_amount"]
+                        else:
+                            current_level = current_level.setdefault(current_key, {})    
+                return {"status": Status.SUCCESS, "results": final_result}
             except Exception as e:
                 return {"status": Status.FAILURE, "message": f"Fetching report failed due to {e}"}
