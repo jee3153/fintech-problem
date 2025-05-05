@@ -59,11 +59,16 @@ class Repository:
     def register_currency(self, currency: Currency):
         with Session(self.engine) as session:
             try:
-                stmt = create(Currency).values(
-                    currency=currency.currency,
-                    country=currency.country
-                )
-                session.exec(stmt)
+                stmt = select(Currency).where(Currency.currency == currency.currency)
+                existing_currency = session.exec(stmt).one_or_none()
+
+                if existing_currency:
+                    return {
+                    "status": Status.FAILURE, 
+                    "message": f"The currency {currency} already exists."
+                    }
+
+                session.add(Currency(currency=currency.currency,country=currency.country))
                 session.commit()
                 return {
                     "status": Status.SUCCESS, 
@@ -130,17 +135,14 @@ class Repository:
     def delete_transaction(self, transaction_id: UUID):
         with Session(self.engine) as session:
             try:
-                stmt = update(Transaction).where(Transaction.id == transaction_id)
-                transaction = session.exec(stmt).one()  
-                transaction.deleted = True      
+                stmt = update(Transaction).where(Transaction.id == transaction_id).values(deleted=True)
+                session.exec(stmt)  
                 session.commit()
-                session.refresh(transaction)
                 return {"status": Status.SUCCESS, "result": f"transaction {transaction_id} is successfully deleted."}
             except Exception as e:
                 return {"status": Status.FAILURE, "message": f"Failed to delete transaction {transaction_id}."}
             
-    def get_report(self, from_date, to_date, groups: list[str]):
-        print(groups)
+    def get_report(self, from_date=None, to_date=None, groups: list[str]=[]):
         group_by_map = {
             GroupBy.CURRENCY: Transaction.currency, 
             GroupBy.DAY: func.date(Transaction.date).label("date"), 
